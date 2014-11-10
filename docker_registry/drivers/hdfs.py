@@ -28,6 +28,7 @@ import os
 import hadoopy
 import shutil
 from hadoopy._hdfs import _checked_hadoop_fs_command
+from snakebite.client import Client
 
 from ..core import driver
 from ..core import exceptions
@@ -60,12 +61,14 @@ def hdfs_putf(local_path, hdfs_path):
 
 class Storage(driver.Base):
 
-    supports_bytes_range = True
+    #supports_bytes_range = True
 
     def __init__(self, path=None, config=None):
         self._config = config
         self._root_path = path or '/registry'
         self._local_path = getattr(self._config, 'local_path')
+        self._hdfs_nn_host = self._config.hdfs_nn_host
+        self._hdfs_nn_port = self._config.hdfs_nn_port
 
     def _init_path(self, path=None):
         if path:
@@ -111,39 +114,16 @@ class Storage(driver.Base):
         return hdfs_path
 
     def stream_read(self, path, bytes_range=None):
-        local_path, hdfs_path = self._init_path(path)
-        self._create_local(local_path)
-        nb_bytes = 0
-        total_size = 0
-        if not os.path.exists(local_path):
-            self._create_local(local_path)
-            hadoopy.get(hdfs_path, local_path)
+        hdfs_path = (self._init_path(path))[1]
+
         try:
-            with open(local_path, mode='rb') as f:
-                if bytes_range:
-                    f.seek(bytes_range[0])
-                    total_size = bytes_range[1] - bytes_range[0] + 1
-                while True:
-                    buf = None
-                    if bytes_range:
-                        # Bytes Range is enabled
-                        buf_size = self.buffer_size
-                        if nb_bytes + buf_size > total_size:
-                            # We make sure we don't read out of the range
-                            buf_size = total_size - nb_bytes
-                        if buf_size > 0:
-                            buf = f.read(buf_size)
-                            nb_bytes += len(buf)
-                        else:
-                            # We're at the end of the range
-                            buf = ''
-                    else:
-                        buf = f.read(self.buffer_size)
-                    if not buf:
-                        break
-                    yield buf
-        except IOError:
+            client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+            xs = client.cat([hdfs_path], True)
+            for content in xs.next():
+                yield content
+        except Exception:
             raise exceptions.FileNotFoundError('%s is not there' % path)
+
 
     def stream_write(self, path, fp):
         # Size is mandatory
