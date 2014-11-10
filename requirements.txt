@@ -1,1 +1,2 @@
 docker-registry-core>=2,<3
+snakebite>=2
