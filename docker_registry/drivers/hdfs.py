@@ -24,6 +24,7 @@ yet support writing to hdfs.
 
 """
 
+import logging
 import os
 import hadoopy
 import shutil
@@ -36,6 +37,7 @@ from ..core import lru
 
 # Hadoopy fs functions are... deficient.  Yes this is gross.  I'm sorry.
 
+logger = logging.getLogger(__name__)
 
 def hdfs_mkdirp(path):
     cmd = "hadoop fs -mkdir -p %s" % (path)
@@ -83,6 +85,12 @@ class Storage(driver.Base):
         if not os.path.exists(dirname):
             os.makedirs(dirname)
 
+    def _delete_local_file(self, local_file):
+        if not os.path.exists(local_file):
+            logger.warn("Try to delete local file %s does not exsit" % local_path)
+        else:
+            os.remove(local_file)
+
     def _create_hdfs(self, hdfs_path):
         dirname = os.path.dirname(hdfs_path)
         if not hadoopy.exists(dirname):
@@ -100,7 +108,7 @@ class Storage(driver.Base):
         except Exception as e:
             raise exceptions.FileNotFoundError('%s is not there (%s)'
                                                % (local_path, e.strerror))
-
+        self._delete_local_file(local_path)
         return d
 
     @lru.set
@@ -111,6 +119,7 @@ class Storage(driver.Base):
             f.write(content)
         self._create_hdfs(hdfs_path)
         hdfs_putf(local_path, hdfs_path)
+        self._delete_local_file(local_path)
         return hdfs_path
 
     def stream_read(self, path, bytes_range=None):
@@ -140,20 +149,13 @@ class Storage(driver.Base):
                 pass
         self._create_hdfs(hdfs_path)
         hdfs_putf(local_path, hdfs_path)
+        self._delete_local_file(local_path)
 
     def list_directory(self, path=None):
-        prefix = ''
-        if path:
-            prefix = '%s/' % path
-        local_path, hdfs_path = self._init_path(path)
-        exists = False
+        hdfs_path = (self._init_path(path))[1]
         try:
-            for d in hadoopy.ls(hdfs_path):
-                exists = True
-                yield os.path.relpath(d, self._local_path)
+            return hadoopy.ls(hdfs_path)
         except Exception:
-            pass
-        if not exists:
             raise exceptions.FileNotFoundError('%s is not there' % path)
 
     def exists(self, path):
