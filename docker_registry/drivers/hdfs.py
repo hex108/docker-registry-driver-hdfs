@@ -66,11 +66,19 @@ class Storage(driver.Base):
     #supports_bytes_range = True
 
     def __init__(self, path=None, config=None):
-        self._config = config
         self._root_path = path or '/registry'
-        self._local_path = getattr(self._config, 'local_path')
-        self._hdfs_nn_host = self._config.hdfs_nn_host
-        self._hdfs_nn_port = self._config.hdfs_nn_port
+        self._local_path = config.local_path or './local_registry'
+        self._hdfs_nn_host = config.hdfs_nn_host
+        self._hdfs_nn_port = config.hdfs_nn_port
+        self._need_sync = config.need_sync
+        # If it is master, it needs to sync the data to slaves
+        self._is_master = config.is_master
+        if self._need_sync:
+            if self._is_master:
+                logger.info("Master storage node.")
+            else:
+                logger.info("Slave storage node.")
+        logger.info("HDFS namenode info: %s:%s" % (self._hdfs_nn_host, self._hdfs_nn_port))
 
     def _init_path(self, path=None):
         if path:
@@ -96,6 +104,14 @@ class Storage(driver.Base):
         if not hadoopy.exists(dirname):
             hdfs_mkdirp(dirname)
 
+    def _sync_with_slaves(self, path, operation):
+        # TODO: sync with slaves
+        if self._need_sync:
+            if self._is_master:
+                logger.info("Sync with slaves : %s %s" % (operation, path))
+            else:
+                logger.error("MUST NOT %s %s on slaves" % (operation, path))
+
     @lru.get
     def get_content(self, path):
         local_path, hdfs_path = self._init_path(path)
@@ -120,6 +136,7 @@ class Storage(driver.Base):
         self._create_hdfs(hdfs_path)
         hdfs_putf(local_path, hdfs_path)
         self._delete_local_file(local_path)
+        self._sync_with_slaves(path, "ADD")
         return hdfs_path
 
     def stream_read(self, path, bytes_range=None):
@@ -150,6 +167,7 @@ class Storage(driver.Base):
         self._create_hdfs(hdfs_path)
         hdfs_putf(local_path, hdfs_path)
         self._delete_local_file(local_path)
+        self._sync_with_slaves(hdfs_path, "ADD")
 
     def list_directory(self, path=None):
         hdfs_path = (self._init_path(path))[1]
@@ -179,6 +197,7 @@ class Storage(driver.Base):
             hdfs_rmr(hdfs_path)
         except Exception:
             raise exceptions.FileNotFoundError('%s is not there' % path)
+        self._sync_with_slaves(hdfs_path, "DEL")
 
     def get_size(self, path):
         local_path, hdfs_path = self._init_path(path)
