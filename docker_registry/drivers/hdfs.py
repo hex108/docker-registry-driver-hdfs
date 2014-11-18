@@ -27,7 +27,9 @@ yet support writing to hdfs.
 import logging
 import os
 import hadoopy
+import pika
 import shutil
+import time
 from hadoopy._hdfs import _checked_hadoop_fs_command
 from snakebite.client import Client
 
@@ -76,8 +78,13 @@ class Storage(driver.Base):
         if self._need_sync:
             if self._is_master:
                 logger.info("Master storage node.")
+                self._mq_queue = config.mq_queue
+                self._mq_host = config.mq_host
+                self._init_mq(self._mq_host, self._mq_queue)
             else:
                 logger.info("Slave storage node.")
+        else:
+            logger.info("Not in sync mode.")
         logger.info("HDFS namenode info: %s:%s" % (self._hdfs_nn_host, self._hdfs_nn_port))
 
     def _init_path(self, path=None):
@@ -87,6 +94,12 @@ class Storage(driver.Base):
             hdfs_path = self._root_path
         local_path = os.path.join(self._local_path, path)
         return local_path, hdfs_path
+
+    def _init_mq(self, mq_host, mq_queue):
+        connection = pika.BlockingConnection(pika.ConnectionParameters(mq_host))
+        channel = connection.channel()
+        channel.queue_declare(queue=mq_queue, durable=True)
+        self._channel = channel
 
     def _create_local(self, local_path):
         dirname = os.path.dirname(local_path)
@@ -104,13 +117,37 @@ class Storage(driver.Base):
         if not hadoopy.exists(dirname):
             hdfs_mkdirp(dirname)
 
+    def _send_msg(self, msg):
+        logger.info(msg)
+        while True:
+            try:
+                self._channel.basic_publish(exchange='',
+                                            routing_key=self._mq_queue,
+                                            body=msg,
+                                            properties=pika.BasicProperties(
+                                                delivery_mode=2. # make message persistent
+                                            ))
+                return
+            except Exception, e:
+                logger.error(e)
+                self._init_mq(self._mq_host, self._mq_queue)
+                time.sleep(10)
+
     def _sync_with_slaves(self, path, operation):
-        # TODO: sync with slaves
-        if self._need_sync:
+        if not self._need_sync:
+            return
+        else:
             if self._is_master:
                 logger.info("Sync with slaves : %s %s" % (operation, path))
             else:
                 logger.error("MUST NOT %s %s on slaves" % (operation, path))
+                return
+        if path.split('/')[-1] != "_inprogress":
+            if path[0] != '/':
+                path = self._init_path(path)[1]
+            self._send_msg(operation + " " + path)
+        else:
+            logger.info("Not sync file %s" % path)
 
     @lru.get
     def get_content(self, path):
