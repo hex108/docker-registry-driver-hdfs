@@ -128,7 +128,7 @@ class Storage(driver.Base):
                                                 delivery_mode=2. # make message persistent
                                             ))
                 return
-            except Exception, e:
+            except Exception as e:
                 logger.error(e)
                 self._init_mq(self._mq_host, self._mq_queue)
                 time.sleep(10)
@@ -159,6 +159,7 @@ class Storage(driver.Base):
             with open(local_path, mode='rb') as f:
                 d = f.read()
         except Exception as e:
+            logger.error(e)
             raise exceptions.FileNotFoundError('%s is not there (%s)'
                                                % (local_path, e.strerror))
         self._delete_local_file(local_path)
@@ -184,7 +185,8 @@ class Storage(driver.Base):
             xs = client.cat([hdfs_path], True)
             for content in xs.next():
                 yield content
-        except Exception:
+        except Exception as e:
+            logger.error(e)
             raise exceptions.FileNotFoundError('%s is not there' % path)
 
 
@@ -199,7 +201,8 @@ class Storage(driver.Base):
                     if not buf:
                         break
                     f.write(buf)
-            except IOError:
+            except IOError as e:
+                logger.error(e)
                 pass
         self._create_hdfs(hdfs_path)
         hdfs_putf(local_path, hdfs_path)
@@ -210,7 +213,8 @@ class Storage(driver.Base):
         hdfs_path = (self._init_path(path))[1]
         try:
             return hadoopy.ls(hdfs_path)
-        except Exception:
+        except Exception as e:
+            logger.error(e)
             raise exceptions.FileNotFoundError('%s is not there' % path)
 
     def exists(self, path):
@@ -228,11 +232,13 @@ class Storage(driver.Base):
             return
         try:
             os.remove(local_path)
-        except Exception:
+        except Exception as e:
+            logger.error(e)
             pass
         try:
             hdfs_rmr(hdfs_path)
-        except Exception:
+        except Exception as e:
+            logger.error(e)
             raise exceptions.FileNotFoundError('%s is not there' % path)
         self._sync_with_slaves(hdfs_path, "DEL")
 
@@ -243,7 +249,8 @@ class Storage(driver.Base):
         except OSError:
             try:
                 return hdfs_du(hdfs_path)
-            except Exception:
+            except Exception as e:
+                logger.error(e)
                 raise exceptions.FileNotFoundError('%s is not there' % path)
 
 #
