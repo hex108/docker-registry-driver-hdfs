@@ -182,7 +182,7 @@ class Storage(driver.Base):
 
         try:
             client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
-            xs = client.cat([hdfs_path], True)
+            xs = client.cat([hdfs_path])
             for content in xs.next():
                 yield content
         except Exception as e:
