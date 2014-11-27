@@ -151,19 +151,14 @@ class Storage(driver.Base):
 
     @lru.get
     def get_content(self, path):
-        local_path, hdfs_path = self._init_path(path)
-        self._create_local(local_path)
         try:
-            if not os.path.exists(local_path):
-                    hadoopy.get(hdfs_path, local_path)
-            with open(local_path, mode='rb') as f:
-                d = f.read()
+            buf = ""
+            for content in self.stream_read(path):
+                buf += content
         except Exception as e:
             logger.error(e)
-            raise exceptions.FileNotFoundError('%s is not there (%s)'
-                                               % (local_path, e.strerror))
-        self._delete_local_file(local_path)
-        return d
+            raise exceptions.FileNotFoundError('%s is not there' % path)
+        return buf
 
     @lru.set
     def put_content(self, path, content):
