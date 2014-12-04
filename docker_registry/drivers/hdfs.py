@@ -307,6 +307,9 @@ class Storage(driver.Base):
             logger.error(e)
             raise exceptions.FileNotFoundError('%s is not there' % path)
 
+    def is_private(self, namespace, repository):
+        return False
+
 #
 # Editor modelines  -  http://www.wireshark.org/tools/modelines.html
 #
