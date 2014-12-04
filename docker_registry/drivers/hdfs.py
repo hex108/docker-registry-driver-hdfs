@@ -149,6 +149,35 @@ class Storage(driver.Base):
         else:
             logger.info("Not sync file %s" % path)
 
+    def _is_layer(self, path):
+        return path.split('/')[-1] == "layer"
+
+    def _get_key(self, path, key):
+        return lru.cache_key(path + "/" + str(key))
+
+    def _record_layer_size(self, path, size):
+        if self._is_layer(path):
+            lru.set_key_val(self._get_key(path, "size"), size)
+
+    def _delete_layer_size(self, path):
+        if self._is_layer(path):
+            lru.remove_key(self._get_key(path, "size"))
+
+    def _get_layer_size(self, path):
+        return lru.get_by_key(self._get_key(path, "size"))
+
+
+    def _record_layer_exists(self, path):
+        if self._is_layer(path):
+            lru.set_key_val(self._get_key(path, "exists"), True)
+
+    def _delete_layer_exists(self, path):
+        if self._is_layer(path):
+            lru.remove_key(self._get_key(path, "exists"))
+
+    def _get_layer_exists(self, path):
+        return lru.get_by_key(self._get_key(path, "exists"))
+
     @lru.get
     def get_content(self, path):
         try:
@@ -201,6 +230,8 @@ class Storage(driver.Base):
                 pass
         self._create_hdfs(hdfs_path)
         hdfs_putf(local_path, hdfs_path)
+        self._record_layer_size(path, os.path.getsize(local_path))
+        self._record_layer_exists(path)
         self._delete_local_file(local_path)
         self._sync_with_slaves(hdfs_path, "ADD")
 
@@ -213,40 +244,39 @@ class Storage(driver.Base):
             raise exceptions.FileNotFoundError('%s is not there' % path)
 
     def exists(self, path):
-        local_path, hdfs_path = self._init_path(path)
-        if os.path.exists(local_path):
+        hdfs_path = (self._init_path(path))[1]
+
+        if self._get_layer_exists(path):
             return True
-        else:
-            return hadoopy.exists(hdfs_path)
+
+        return hadoopy.exists(hdfs_path)
 
     @lru.remove
     def remove(self, path):
-        local_path, hdfs_path = self._init_path(path)
-        if os.path.isdir(local_path):
-            shutil.rmtree(local_path)
-            return
-        try:
-            os.remove(local_path)
-        except Exception as e:
-            logger.error(e)
-            pass
+        hdfs_path = (self._init_path(path))[1]
         try:
             hdfs_rmr(hdfs_path)
+            self._delete_layer_size(path)
+            self._delete_layer_exists(path)
         except Exception as e:
             logger.error(e)
             raise exceptions.FileNotFoundError('%s is not there' % path)
         self._sync_with_slaves(hdfs_path, "DEL")
 
     def get_size(self, path):
-        local_path, hdfs_path = self._init_path(path)
+        size = self._get_layer_size(path)
+        if size:
+            return size
+
+        hdfs_path = (self._init_path(path))[1]
+
         try:
-            return os.path.getsize(local_path)
-        except OSError:
-            try:
-                return hdfs_du(hdfs_path)
-            except Exception as e:
-                logger.error(e)
-                raise exceptions.FileNotFoundError('%s is not there' % path)
+            size = hdfs_du(hdfs_path)
+            self._record_layer_size(path, size)
+            return size
+        except Exception as e:
+            logger.error(e)
+            raise exceptions.FileNotFoundError('%s is not there' % path)
 
 #
 # Editor modelines  -  http://www.wireshark.org/tools/modelines.html
