@@ -65,7 +65,7 @@ def hdfs_putf(local_path, hdfs_path):
 
 class Storage(driver.Base):
 
-    #supports_bytes_range = True
+    supports_bytes_range = True
 
     def __init__(self, path=None, config=None):
         self._root_path = path or '/registry'
@@ -167,9 +167,9 @@ class Storage(driver.Base):
         return lru.get_by_key(self._get_key(path, "size"))
 
 
-    def _record_layer_exists(self, path):
+    def _record_layer_exists(self, path, val):
         if self._is_layer(path):
-            lru.set_key_val(self._get_key(path, "exists"), True)
+            lru.set_key_val(self._get_key(path, "exists"), val)
 
     def _delete_layer_exists(self, path):
         if self._is_layer(path):
@@ -202,14 +202,41 @@ class Storage(driver.Base):
         return hdfs_path
 
     def stream_read(self, path, bytes_range=None):
-        hdfs_path = (self._init_path(path))[1]
+        local_path, hdfs_path = self._init_path(path)
+        self._create_local(local_path)
+        nb_bytes = 0
+        total_size = 0
+
+        self._create_local(local_path)
+        hadoopy.get(hdfs_path, local_path)
 
         try:
-            client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
-            xs = client.cat([hdfs_path])
-            for content in xs.next():
-                yield content
+            with open(local_path, mode='rb') as f:
+                if bytes_range:
+                    f.seek(bytes_range[0])
+                    total_size = bytes_range[1] - bytes_range[0] + 1
+                while True:
+                    buf = None
+                    if bytes_range:
+                        # Bytes Range is enabled
+                        buf_size = self.buffer_size
+                        if nb_bytes + buf_size > total_size:
+                            # We make sure we don't read out of the range
+                            buf_size = total_size - nb_bytes
+                        if buf_size > 0:
+                            buf = f.read(buf_size)
+                            nb_bytes += len(buf)
+                        else:
+                            # We're at the end of the range
+                            buf = ''
+                    else:
+                        buf = f.read(self.buffer_size)
+                    if not buf:
+                        break
+                    yield buf
+            self._delete_local_file(local_path)
         except Exception as e:
+            self._delete_local_file(local_path)
             logger.error(e)
             raise exceptions.FileNotFoundError('%s is not there' % path)
 
@@ -231,7 +258,7 @@ class Storage(driver.Base):
         self._create_hdfs(hdfs_path)
         hdfs_putf(local_path, hdfs_path)
         self._record_layer_size(path, os.path.getsize(local_path))
-        self._record_layer_exists(path)
+        self._record_layer_exists(path, True)
         self._delete_local_file(local_path)
         self._sync_with_slaves(hdfs_path, "ADD")
 
@@ -246,10 +273,12 @@ class Storage(driver.Base):
     def exists(self, path):
         hdfs_path = (self._init_path(path))[1]
 
-        if self._get_layer_exists(path):
-            return True
+        v = self._get_layer_exists(path)
+        if v is None:
+            v = hadoopy.exists(hdfs_path)
+            self._record_layer_exists(path, v)
 
-        return hadoopy.exists(hdfs_path)
+        return v
 
     @lru.remove
     def remove(self, path):
