@@ -119,6 +119,7 @@ class Storage(driver.Base):
             if not hadoopy.exists(dirname):
                 hdfs_mkdirp(dirname)
             self._record_exists(dirname, "True")
+            return True
         else:
             return str(v) == 'True'
 
