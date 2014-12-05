@@ -114,8 +114,13 @@ class Storage(driver.Base):
 
     def _create_hdfs(self, hdfs_path):
         dirname = os.path.dirname(hdfs_path)
-        if not hadoopy.exists(dirname):
-            hdfs_mkdirp(dirname)
+        v = self._get_exists(dirname)
+        if v is None:
+            if not hadoopy.exists(dirname):
+                hdfs_mkdirp(dirname)
+            self._record_exists(dirname, "True")
+        else:
+            return str(v) == 'True'
 
     def _send_msg(self, msg):
         logger.info(msg)
@@ -255,6 +260,7 @@ class Storage(driver.Base):
             hdfs_rmr(hdfs_path)
             self._delete_size(path)
             self._delete_exists(path)
+            self._delete_exists(os.path.dirname(hdfs_path))
         except Exception as e:
             logger.error(e)
             raise exceptions.FileNotFoundError('%s is not there' % path)
