@@ -251,7 +251,7 @@ class Storage(driver.Base):
             v = hadoopy.exists(hdfs_path)
             self._record_layer_exists(path, v)
 
-        return v == 'True'
+        return str(v) == 'True'
 
     @lru.remove
     def remove(self, path):
