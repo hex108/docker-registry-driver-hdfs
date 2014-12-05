@@ -108,7 +108,7 @@ class Storage(driver.Base):
 
     def _delete_local_file(self, local_file):
         if not os.path.exists(local_file):
-            logger.warn("Try to delete local file %s does not exsit" % local_path)
+            logger.warn("Try to delete local file %s does not exsit" % local_file)
         else:
             os.remove(local_file)
 
@@ -155,28 +155,31 @@ class Storage(driver.Base):
     def _get_key(self, path, key):
         return lru.cache_key(path + "/" + str(key))
 
-    def _record_layer_size(self, path, size):
-        if self._is_layer(path):
-            lru.set_key_val(self._get_key(path, "size"), size)
+    def _record_size(self, path, size):
+        lru.set_key_val(self._get_key(path, "size"), size)
 
-    def _delete_layer_size(self, path):
-        if self._is_layer(path):
-            lru.remove_key(self._get_key(path, "size"))
+    def _delete_size(self, path):
+        lru.remove_key(self._get_key(path, "size"))
 
-    def _get_layer_size(self, path):
+    def _get_size(self, path):
         return lru.get_by_key(self._get_key(path, "size"))
 
+    def _record_exists(self, path, val):
+        lru.set_key_val(self._get_key(path, "exists"), val)
 
-    def _record_layer_exists(self, path, val):
-        if self._is_layer(path):
-            lru.set_key_val(self._get_key(path, "exists"), val)
+    def _delete_exists(self, path):
+        lru.remove_key(self._get_key(path, "exists"))
 
-    def _delete_layer_exists(self, path):
-        if self._is_layer(path):
-            lru.remove_key(self._get_key(path, "exists"))
-
-    def _get_layer_exists(self, path):
+    def _get_exists(self, path):
         return lru.get_by_key(self._get_key(path, "exists"))
+
+    def _put_local_to_hdfs(self, path, local_path, hdfs_path):
+        self._create_hdfs(hdfs_path)
+        hdfs_putf(local_path, hdfs_path)
+        self._record_size(path, os.path.getsize(local_path))
+        self._record_exists(path, True)
+        self._delete_local_file(local_path)
+        self._sync_with_slaves(path, "ADD")
 
     @lru.get
     def get_content(self, path):
@@ -195,10 +198,7 @@ class Storage(driver.Base):
         self._create_local(local_path)
         with open(local_path, mode='wb') as f:
             f.write(content)
-        self._create_hdfs(hdfs_path)
-        hdfs_putf(local_path, hdfs_path)
-        self._delete_local_file(local_path)
-        self._sync_with_slaves(path, "ADD")
+        self._put_local_to_hdfs(path, local_path, hdfs_path)
         return hdfs_path
 
     def stream_read(self, path, bytes_range=None):
@@ -228,12 +228,7 @@ class Storage(driver.Base):
             except IOError as e:
                 logger.error(e)
                 pass
-        self._create_hdfs(hdfs_path)
-        hdfs_putf(local_path, hdfs_path)
-        self._record_layer_size(path, os.path.getsize(local_path))
-        self._record_layer_exists(path, True)
-        self._delete_local_file(local_path)
-        self._sync_with_slaves(hdfs_path, "ADD")
+        self._put_local_to_hdfs(path, local_path, hdfs_path)
 
     def list_directory(self, path=None):
         hdfs_path = (self._init_path(path))[1]
@@ -246,10 +241,10 @@ class Storage(driver.Base):
     def exists(self, path):
         hdfs_path = (self._init_path(path))[1]
 
-        v = self._get_layer_exists(path)
+        v = self._get_exists(path)
         if v is None:
             v = hadoopy.exists(hdfs_path)
-            self._record_layer_exists(path, v)
+            self._record_exists(path, v)
 
         return str(v) == 'True'
 
@@ -258,15 +253,15 @@ class Storage(driver.Base):
         hdfs_path = (self._init_path(path))[1]
         try:
             hdfs_rmr(hdfs_path)
-            self._delete_layer_size(path)
-            self._delete_layer_exists(path)
+            self._delete_size(path)
+            self._delete_exists(path)
         except Exception as e:
             logger.error(e)
             raise exceptions.FileNotFoundError('%s is not there' % path)
         self._sync_with_slaves(hdfs_path, "DEL")
 
     def get_size(self, path):
-        size = self._get_layer_size(path)
+        size = self._get_size(path)
         if size:
             return size
 
@@ -274,7 +269,7 @@ class Storage(driver.Base):
 
         try:
             size = hdfs_du(hdfs_path)
-            self._record_layer_size(path, size)
+            self._record_size(path, size)
             return size
         except Exception as e:
             logger.error(e)
