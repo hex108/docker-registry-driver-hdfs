@@ -41,22 +41,6 @@ from ..core import lru
 
 logger = logging.getLogger(__name__)
 
-def hdfs_mkdirp(path):
-    cmd = "hadoop fs -mkdir -p %s" % (path)
-    rcode, stdout, stderr = _checked_hadoop_fs_command(cmd)
-
-
-def hdfs_du(path):
-    cmd = "hadoop fs -du -s %s" % (path)
-    rcode, stdout, stderr = _checked_hadoop_fs_command(cmd)
-    if stdout:
-        return stdout.split(' ')[0]
-
-
-def hdfs_rmr(path):
-    cmd = "hadoop fs -rm -r %s" % (path)
-    rcode, stdout, stderr = _checked_hadoop_fs_command(cmd)
-
 
 def hdfs_putf(local_path, hdfs_path):
     cmd = "hadoop fs -put -f %s %s" % (local_path, hdfs_path)
@@ -72,6 +56,7 @@ class Storage(driver.Base):
         self._local_path = config.local_path or './local_registry'
         self._hdfs_nn_host = config.hdfs_nn_host
         self._hdfs_nn_port = config.hdfs_nn_port
+        self._hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
         self._need_sync = config.need_sync
         # If it is master, it needs to sync the data to slaves
         self._is_master = config.is_master
@@ -101,6 +86,30 @@ class Storage(driver.Base):
         channel.queue_declare(queue=mq_queue, durable=True)
         self._channel = channel
 
+    def _hdfs_exsits(self, path):
+        return self._hdfs_client.test(path, exists=True)
+
+    def _hdfs_mkdirp(self, path):
+        xs = self._hdfs_client.mkdir([path], create_parent=True)
+        ret = xs.next()
+        result = ret["result"]
+        if not result:
+            logger.error('Failed to mkdir -p {0} : {1}'.format(path, ret["error"]))
+        return result
+
+    def _hdfs_rmr(self, path):
+        xs = self._hdfs_client.delete([path], recurse=True)
+        ret = xs.next()
+        result = ret["result"]
+        if not result:
+            logger.error('Failed to delete {0} : {1}'.format(path, ret["error"]))
+        return result
+
+    def _hdfs_du(self, path):
+        xs = self._hdfs_client.du([path], include_toplevel=True)
+        ret = xs.next()
+        return ret["length"]
+
     def _create_local(self, local_path):
         dirname = os.path.dirname(local_path)
         if not os.path.exists(dirname):
@@ -116,7 +125,7 @@ class Storage(driver.Base):
         dirname = os.path.dirname(hdfs_path)
         v = self._get_exists(dirname)
         if v is None:
-            hdfs_mkdirp(dirname)
+            self._hdfs_mkdirp(dirname)
             self._record_exists(dirname, "True")
             return True
         else:
@@ -210,8 +219,7 @@ class Storage(driver.Base):
         hdfs_path = (self._init_path(path))[1]
 
         try:
-            client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
-            xs = client.cat([hdfs_path])
+            xs = self._hdfs_client.cat([hdfs_path])
             for content in xs.next():
                 yield content
         except Exception as e:
@@ -248,7 +256,7 @@ class Storage(driver.Base):
 
         v = self._get_exists(path)
         if v is None:
-            v = hadoopy.exists(hdfs_path)
+            v = self._hdfs_exsits(hdfs_path)
             self._record_exists(path, v)
 
         return str(v) == 'True'
@@ -257,7 +265,7 @@ class Storage(driver.Base):
     def remove(self, path):
         hdfs_path = (self._init_path(path))[1]
         try:
-            hdfs_rmr(hdfs_path)
+            self._hdfs_rmr(hdfs_path)
             self._delete_size(path)
             self._delete_exists(path)
             self._delete_exists(os.path.dirname(hdfs_path))
@@ -274,7 +282,7 @@ class Storage(driver.Base):
         hdfs_path = (self._init_path(path))[1]
 
         try:
-            size = hdfs_du(hdfs_path)
+            size = self._hdfs_du(hdfs_path)
             self._record_size(path, size)
             return size
         except Exception as e:
