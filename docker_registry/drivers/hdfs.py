@@ -246,7 +246,7 @@ class Storage(driver.Base):
     def list_directory(self, path=None):
         hdfs_path = (self._init_path(path))[1]
         try:
-            return hadoopy.ls(hdfs_path)
+            return [x["path"] for x in self._hdfs_client.ls([hdfs_path])]
         except Exception as e:
             logger.error(e)
             raise exceptions.FileNotFoundError('%s is not there' % path)
