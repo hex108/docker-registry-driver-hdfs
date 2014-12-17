@@ -49,14 +49,13 @@ def hdfs_putf(local_path, hdfs_path):
 
 class Storage(driver.Base):
 
-    supports_bytes_range = True
+    #supports_bytes_range = True
 
     def __init__(self, path=None, config=None):
         self._root_path = path or '/registry'
         self._local_path = config.local_path or './local_registry'
         self._hdfs_nn_host = config.hdfs_nn_host
         self._hdfs_nn_port = config.hdfs_nn_port
-        self._hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
         self._need_sync = config.need_sync
         # If it is master, it needs to sync the data to slaves
         self._is_master = config.is_master
@@ -87,10 +86,12 @@ class Storage(driver.Base):
         self._channel = channel
 
     def _hdfs_exsits(self, path):
-        return self._hdfs_client.test(path, exists=True)
+        hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+        return hdfs_client.test(path, exists=True)
 
     def _hdfs_mkdirp(self, path):
-        xs = self._hdfs_client.mkdir([path], create_parent=True)
+        hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+        xs = hdfs_client.mkdir([path], create_parent=True)
         ret = xs.next()
         result = ret["result"]
         if not result:
@@ -98,7 +99,8 @@ class Storage(driver.Base):
         return result
 
     def _hdfs_rmr(self, path):
-        xs = self._hdfs_client.delete([path], recurse=True)
+        hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+        xs = hdfs_client.delete([path], recurse=True)
         ret = xs.next()
         result = ret["result"]
         if not result:
@@ -106,7 +108,8 @@ class Storage(driver.Base):
         return result
 
     def _hdfs_du(self, path):
-        xs = self._hdfs_client.du([path], include_toplevel=True)
+        hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+        xs = hdfs_client.du([path], include_toplevel=True)
         ret = xs.next()
         return ret["length"]
 
@@ -219,7 +222,8 @@ class Storage(driver.Base):
         hdfs_path = (self._init_path(path))[1]
 
         try:
-            xs = self._hdfs_client.cat([hdfs_path])
+            hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+            xs = hdfs_client.cat([hdfs_path])
             for content in xs.next():
                 yield content
         except Exception as e:
@@ -246,7 +250,8 @@ class Storage(driver.Base):
     def list_directory(self, path=None):
         hdfs_path = (self._init_path(path))[1]
         try:
-            return [x["path"] for x in self._hdfs_client.ls([hdfs_path])]
+            hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+            return [x["path"] for x in hdfs_client.ls([hdfs_path])]
         except Exception as e:
             logger.error(e)
             raise exceptions.FileNotFoundError('%s is not there' % path)
