@@ -32,6 +32,8 @@ import shutil
 import time
 from hadoopy._hdfs import _checked_hadoop_fs_command
 from snakebite.client import Client
+from snakebite.client import HAClient
+from snakebite.namenode import Namenode
 
 from ..core import driver
 from ..core import exceptions
@@ -54,8 +56,18 @@ class Storage(driver.Base):
     def __init__(self, path=None, config=None):
         self._root_path = path or '/registry'
         self._local_path = config.local_path or './local_registry'
-        self._hdfs_nn_host = config.hdfs_nn_host
-        self._hdfs_nn_port = config.hdfs_nn_port
+        self._hdfs_ha_enable = config.hdfs_ha_enable
+        if self._hdfs_ha_enable:
+            self._hdfs_nn1_host = config.hdfs_nn1_host
+            self._hdfs_nn1_port = config.hdfs_nn1_port
+            self._hdfs_nn2_host = config.hdfs_nn2_host
+            self._hdfs_nn2_port = config.hdfs_nn2_port
+            logger.info("HDFS namenode 1 info: %s:%s" % (self._hdfs_nn1_host, self._hdfs_nn1_port))
+            logger.info("HDFS namenode 2 info: %s:%s" % (self._hdfs_nn2_host, self._hdfs_nn2_port))
+        else:
+            self._hdfs_nn_host = config.hdfs_nn_host
+            self._hdfs_nn_port = config.hdfs_nn_port
+            logger.info("HDFS namenode info: %s:%s" % (self._hdfs_nn_host, self._hdfs_nn_port))
         self._need_sync = config.need_sync
         # If it is master, it needs to sync the data to slaves
         self._is_master = config.is_master
@@ -69,7 +81,6 @@ class Storage(driver.Base):
                 logger.info("Slave storage node.")
         else:
             logger.info("Not in sync mode.")
-        logger.info("HDFS namenode info: %s:%s" % (self._hdfs_nn_host, self._hdfs_nn_port))
 
     def _init_path(self, path=None):
         if path:
@@ -85,12 +96,20 @@ class Storage(driver.Base):
         channel.queue_declare(queue=mq_queue, durable=True)
         self._channel = channel
 
+    def _get_hdfs_client(self):
+        if self._hdfs_ha_enable:
+            nn1 = Namenode(self._hdfs_nn1_host, self._hdfs_nn1_port)
+            nn2 = Namenode(self._hdfs_nn2_host, self._hdfs_nn2_port)
+            return HAClient([nn1, nn2], use_trash=True)
+        else:
+            return Client(self._hdfs_nn_host, self._hdfs_nn_port)
+
     def _hdfs_exsits(self, path):
-        hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+        hdfs_client = self._get_hdfs_client()
         return hdfs_client.test(path, exists=True)
 
     def _hdfs_mkdirp(self, path):
-        hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+        hdfs_client = self._get_hdfs_client()
         xs = hdfs_client.mkdir([path], create_parent=True)
         ret = xs.next()
         result = ret["result"]
@@ -99,7 +118,7 @@ class Storage(driver.Base):
         return result
 
     def _hdfs_rmr(self, path):
-        hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+        hdfs_client = self._get_hdfs_client()
         xs = hdfs_client.delete([path], recurse=True)
         ret = xs.next()
         result = ret["result"]
@@ -108,7 +127,7 @@ class Storage(driver.Base):
         return result
 
     def _hdfs_du(self, path):
-        hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+        hdfs_client = self._get_hdfs_client()
         xs = hdfs_client.du([path], include_toplevel=True)
         ret = xs.next()
         return ret["length"]
@@ -222,7 +241,7 @@ class Storage(driver.Base):
         hdfs_path = (self._init_path(path))[1]
 
         try:
-            hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+            hdfs_client = self._get_hdfs_client()
             xs = hdfs_client.cat([hdfs_path])
             for content in xs.next():
                 yield content
@@ -250,7 +269,7 @@ class Storage(driver.Base):
     def list_directory(self, path=None):
         hdfs_path = (self._init_path(path))[1]
         try:
-            hdfs_client = Client(self._hdfs_nn_host, self._hdfs_nn_port)
+            hdfs_client = self._get_hdfs_client()
             return [x["path"] for x in hdfs_client.ls([hdfs_path])]
         except Exception as e:
             logger.error(e)
